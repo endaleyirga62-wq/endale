@@ -25,18 +25,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'Your login session expired. Sign in again.';
                 unset($_SESSION['pending_demo_login']);
             } else {
-                $accountUsernames = [
-                    'admin' => 'MAU@123-admin',
-                    'registrar' => 'MAU@123-registrar',
-                    'coordinator' => 'MAU@123-coordinator',
-                    'department_head' => 'MAU@123-department-head',
-                    'college_dean' => 'MAU@123-college-dean',
-                    'student' => 'MAU@123-student',
-                ];
-                $stmt = $pdo->prepare('SELECT id, full_name, role, is_active FROM users WHERE LOWER(email) = LOWER(?)');
-                $stmt->execute([$accountUsernames[$selectedRole]]);
+                $stmt = $pdo->prepare('SELECT id, full_name, role, is_active FROM users WHERE role = ? AND is_active = 1 ORDER BY id LIMIT 1');
+                $stmt->execute([$selectedRole]);
                 $user = $stmt->fetch();
-                if (!$user || (int) $user['is_active'] !== 1 || $user['role'] !== $selectedRole) {
+                if (!$user || $user['role'] !== $selectedRole) {
                     $error = 'That demo account is unavailable. Choose another role or contact an administrator.';
                 } else {
                     session_regenerate_id(true);
@@ -53,8 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $passwordInput = $_POST['password'] ?? '';
             $username = is_string($usernameInput) ? trim($usernameInput) : '';
             $password = is_string($passwordInput) ? $passwordInput : '';
-            $stmt = $pdo->prepare("SELECT id, password, is_active FROM users WHERE LOWER(email) = LOWER('MAU@123-admin') AND role = 'admin'");
-            $stmt->execute();
+            $stmt = $pdo->query("SELECT id, password, is_active FROM users WHERE role = 'admin' ORDER BY id LIMIT 1");
             $user = $stmt->fetch();
 
             if (strtolower($username) === 'mau@123'

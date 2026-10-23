@@ -21,3 +21,9 @@ After the credentials are verified, choose which of the six role dashboards to o
 - Create student accounts before importing their records. The registrar CSV must use the exact headers `student_code,full_name,username,gpa`; imported students are assigned to the current academic year.
 - Students can submit three distinct department preferences while the current academic year is open. The registrar runs and reviews a draft before approving and publishing results.
 - Published placement reports can be exported as CSV from the role-specific reports pages.
+
+## Role-based sidebar navigation
+
+- Sidebar items, labels, visibility, and ordering are stored in the `role_navigation` database table and seeded with defaults for all six roles.
+- Admins can edit each role's menu from **Role & Permissions**. Change the position numbers to reorder links, update labels, hide optional entries, and save that role's sidebar.
+- The dashboard and logout links remain visible. Sidebar changes affect navigation and page access for that role.

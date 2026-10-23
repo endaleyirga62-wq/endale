@@ -2,44 +2,24 @@
 require_once __DIR__ . '/auth.php';
 
 $role = $_SESSION['role'] ?? '';
-$menus = [
-    'admin' => [
-        'dashboard' => 'Dashboard', 'users' => 'User Management', 'roles' => 'Role & Permissions',
-        'academic' => 'Academic Year Management', 'settings' => 'System Settings', 'audit' => 'Audit Logs',
-        'backup' => 'Backup & Security',
-    ],
-    'registrar' => [
-        'dashboard' => 'Dashboard', 'import' => 'Import Student Data', 'students' => 'Student Records',
-        'gpa' => 'GPA & Ranking Management', 'placement_config' => 'Placement Configuration',
-        'run' => 'Placement Algorithm Runner', 'review' => 'Placement Review & Approval',
-        'publish' => 'Publish Placement Results', 'reports' => 'Official Placement Reports',
-        'appeals' => 'Appeals Processing',
-    ],
-    'department_head' => [
-        'dashboard' => 'Dashboard', 'department' => 'Department Information', 'criteria' => 'Special Criteria Settings',
-        'capacity' => 'Capacity Proposal', 'applicants' => 'Applicants List', 'assigned' => 'Assigned Students',
-        'announcements' => 'Department Announcements', 'department_reports' => 'Department Reports',
-    ],
-    'student' => [
-        'dashboard' => 'Dashboard', 'departments' => 'Available Departments', 'choices' => 'Department Preference / Selection',
-        'submitted' => 'My Submitted Choices', 'placement_result' => 'Placement Result',
-        'profile' => 'My Profile', 'transcript' => 'My Transcript', 'appeal_submit' => 'Complaints / Appeals',
-        'notifications' => 'Notifications',
-    ],
-    'college_dean' => [
-        'dashboard' => 'Dashboard', 'college' => 'College Information', 'college_departments' => 'College Departments',
-        'capacity_approval' => 'Department Capacity Approval', 'staff' => 'Coordinator & Department Head Management',
-        'analytics' => 'College Placement Analytics', 'appeals' => 'Appeals Review', 'reports' => 'College Reports',
-    ],
-    'coordinator' => [
-        'dashboard' => 'Dashboard', 'choices_monitor' => 'Student Choice Monitoring',
-        'follow_up' => 'Pending Choice Follow-up', 'eligibility' => 'Student Eligibility Monitoring',
-        'appeals' => 'Appeal / Dispute Handling', 'placement_reports' => 'Placement Preparation Reports',
-        'notifications' => 'Notifications',
-    ],
-];
+$roleNames = [];
+foreach ($pdo->query('SELECT slug, name FROM roles ORDER BY name')->fetchAll() as $roleRow) {
+    $roleNames[$roleRow['slug']] = $roleRow['name'];
+}
+$loadMenus = static function (PDO $pdo): array {
+    $menuQuery = $pdo->query(
+        'SELECT role_slug, view_key, label FROM role_navigation WHERE is_active = 1 ORDER BY role_slug, sort_order, view_key'
+    );
+    $menus = [];
+    foreach ($menuQuery->fetchAll() as $navigationItem) {
+        $menus[$navigationItem['role_slug']][$navigationItem['view_key']] = $navigationItem['label'];
+    }
+    $menuQuery->closeCursor();
+    return $menus;
+};
+$menus = $loadMenus($pdo);
 
-if (!isset($menus[$role])) {
+if (!isset($roleNames[$role]) || !isset($menus[$role])) {
     header('Location: login.php');
     exit;
 }
@@ -47,6 +27,7 @@ if (!isset($menus[$role])) {
 $accountCheck = $pdo->prepare('SELECT role, is_active FROM users WHERE id = ?');
 $accountCheck->execute([$_SESSION['user_id']]);
 $account = $accountCheck->fetch();
+$accountCheck->closeCursor();
 if (!$account || !(int) $account['is_active'] || $account['role'] !== $role) {
     $_SESSION = [];
     session_destroy();
@@ -55,7 +36,7 @@ if (!$account || !(int) $account['is_active'] || $account['role'] !== $role) {
 }
 
 $view = $_GET['view'] ?? 'dashboard';
-if (!isset($menus[$role][$view])) {
+if (!isset($menus[$role][$view]) || in_array($view, ['public_home', 'logout'], true)) {
     http_response_code(403);
     $view = 'dashboard';
     $notice = 'You do not have permission to access that section.';
@@ -69,12 +50,14 @@ $currentUserId = (int) $_SESSION['user_id'];
 $getCurrentAcademicYear = function () use ($pdo): ?array {
     $stmt = $pdo->query('SELECT * FROM academic_years WHERE is_current = 1 ORDER BY id DESC');
     $year = $stmt->fetch();
+    $stmt->closeCursor();
     return $year ?: null;
 };
 
 $studentStmt = $pdo->prepare('SELECT * FROM students WHERE user_id = ?');
 $studentStmt->execute([$currentUserId]);
 $currentStudent = $studentStmt->fetch() ?: null;
+$studentStmt->closeCursor();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!sdss_verify_csrf()) {
@@ -83,12 +66,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $action = $_POST['action'] ?? '';
         try {
-            if ($action === 'create_user' && $role === 'admin') {
+            if ($action === 'save_navigation' && $role === 'admin') {
+                $navigationRole = $_POST['role_slug'] ?? '';
+                $navigationInput = $_POST['navigation'] ?? null;
+                if (!is_string($navigationRole) || !isset($roleNames[$navigationRole]) || !is_array($navigationInput)) {
+                    throw new InvalidArgumentException('Choose a valid role and submit its navigation settings.');
+                }
+                $navigationQuery = $pdo->prepare('SELECT view_key FROM role_navigation WHERE role_slug = ?');
+                $navigationQuery->execute([$navigationRole]);
+                $knownViewKeys = $navigationQuery->fetchAll(PDO::FETCH_COLUMN);
+                $navigationQuery->closeCursor();
+                if (!$knownViewKeys || count($navigationInput) !== count($knownViewKeys)) {
+                    throw new InvalidArgumentException('The navigation list changed. Reload the page and try again.');
+                }
+
+                $updates = [];
+                $orders = [];
+                foreach ($knownViewKeys as $viewKey) {
+                    $item = $navigationInput[$viewKey] ?? null;
+                    if (!is_array($item)) {
+                        throw new InvalidArgumentException('Every navigation item must have an order, label, and visibility.');
+                    }
+                    $label = trim((string) ($item['label'] ?? ''));
+                    $sortOrder = filter_var($item['sort_order'] ?? null, FILTER_VALIDATE_INT);
+                    $isActive = $item['is_active'] ?? null;
+                    if ($label === '' || strlen($label) > 120 || $sortOrder === false || $sortOrder < 0
+                        || !in_array($isActive, ['0', '1'], true)) {
+                        throw new InvalidArgumentException('Labels, positions, or visibility values are invalid.');
+                    }
+                    $orders[] = $sortOrder;
+                    $updates[] = [$label, $sortOrder, (int) $isActive, $navigationRole, $viewKey];
+                }
+                if (count(array_unique($orders)) !== count($orders)) {
+                    throw new InvalidArgumentException('Use a different position number for each navigation item.');
+                }
+                foreach ($updates as [$label, $sortOrder, $isActive, $roleSlug, $viewKey]) {
+                    if (in_array($viewKey, ['dashboard', 'logout'], true) && !$isActive) {
+                        throw new InvalidArgumentException('The dashboard and logout links must remain visible for every role.');
+                    }
+                }
+
+                $pdo->beginTransaction();
+                $saveNavigation = $pdo->prepare(
+                    'UPDATE role_navigation SET label = ?, sort_order = ?, is_active = ? WHERE role_slug = ? AND view_key = ?'
+                );
+                foreach ($updates as $update) {
+                    $saveNavigation->execute($update);
+                }
+                $pdo->commit();
+                sdss_audit($pdo, 'navigation.updated', 'role', null, $navigationRole);
+                $notice = 'Sidebar navigation updated for ' . $roleNames[$navigationRole] . '.';
+            } elseif ($action === 'create_user' && $role === 'admin') {
                 $name = trim((string) ($_POST['full_name'] ?? ''));
                 $username = trim((string) ($_POST['username'] ?? ''));
                 $password = (string) ($_POST['password'] ?? '');
                 $newRole = (string) ($_POST['role'] ?? '');
-                if ($name === '' || $username === '' || strlen($password) < 8 || !isset($menus[$newRole])) {
+                if ($name === '' || $username === '' || strlen($password) < 8 || !isset($roleNames[$newRole])) {
                     throw new InvalidArgumentException('Enter a name, username, valid role, and password of at least 8 characters.');
                 }
                 $studentCode = trim((string) ($_POST['student_code'] ?? ''));
@@ -108,13 +141,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
                 sdss_audit($pdo, 'user.created', 'user', $newUserId, $newRole);
                 $notice = 'Account created successfully.';
+            } elseif ($action === 'update_user' && $role === 'admin') {
+                $userId = filter_var($_POST['user_id'] ?? null, FILTER_VALIDATE_INT);
+                $name = trim((string) ($_POST['full_name'] ?? ''));
+                $username = trim((string) ($_POST['username'] ?? ''));
+                $newRole = (string) ($_POST['role'] ?? '');
+                $password = (string) ($_POST['password'] ?? '');
+                if (!$userId || $name === '' || $username === '' || !isset($roleNames[$newRole])) {
+                    throw new InvalidArgumentException('Enter a name, username, and valid role.');
+                }
+                if ($userId === $currentUserId && $newRole !== $role) {
+                    throw new InvalidArgumentException('You cannot change your own administrator role.');
+                }
+                if ($newRole === 'student') {
+                    $studentAccount = $pdo->prepare('SELECT id FROM students WHERE user_id = ?');
+                    $studentAccount->execute([$userId]);
+                    if ($studentAccount->fetchColumn() === false) {
+                        throw new InvalidArgumentException('Create a new student account to add student records and academic details.');
+                    }
+                }
+                $existingUser = $pdo->prepare('SELECT id FROM users WHERE id = ?');
+                $existingUser->execute([$userId]);
+                if ($existingUser->fetchColumn() === false) {
+                    throw new RuntimeException('The user account was not found.');
+                }
+                if ($password !== '' && strlen($password) < 8) {
+                    throw new InvalidArgumentException('A new password must contain at least 8 characters.');
+                }
+                $updateSql = 'UPDATE users SET full_name = ?, email = ?, role = ?';
+                $updateParams = [$name, $username, $newRole];
+                if ($password !== '') {
+                    $updateSql .= ', password = ?';
+                    $updateParams[] = password_hash($password, PASSWORD_DEFAULT);
+                }
+                $updateSql .= ' WHERE id = ?';
+                $updateParams[] = $userId;
+                $update = $pdo->prepare($updateSql);
+                $update->execute($updateParams);
+                if ($newRole === 'student') {
+                    $pdo->prepare('UPDATE students SET full_name = ?, email = ? WHERE user_id = ?')
+                        ->execute([$name, $username, $userId]);
+                }
+                sdss_audit($pdo, 'user.updated', 'user', $userId, $newRole);
+                $notice = 'User account updated.';
             } elseif ($action === 'toggle_user' && $role === 'admin') {
                 $userId = filter_var($_POST['user_id'] ?? null, FILTER_VALIDATE_INT);
                 if (!$userId || $userId === $currentUserId) {
                     throw new InvalidArgumentException('You cannot deactivate your own account.');
                 }
-                $pdo->prepare('UPDATE users SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?')
-                    ->execute([$userId]);
+                $toggle = $pdo->prepare('UPDATE users SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?');
+                $toggle->execute([$userId]);
+                if ($toggle->rowCount() !== 1) {
+                    throw new RuntimeException('The user account was not found.');
+                }
                 sdss_audit($pdo, 'user.status_changed', 'user', $userId);
                 $notice = 'User account status updated.';
             } elseif ($action === 'create_academic_year' && in_array($role, ['admin', 'registrar'], true)) {
@@ -124,6 +203,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $appealClose = trim((string) ($_POST['appeals_close_at'] ?? ''));
                 if ($name === '') {
                     throw new InvalidArgumentException('Academic year name is required.');
+                }
+                $openTimestamp = $open !== '' ? strtotime($open) : false;
+                $closeTimestamp = $close !== '' ? strtotime($close) : false;
+                if ($open !== '' && $openTimestamp === false) {
+                    throw new InvalidArgumentException('Enter a valid selection opening date.');
+                }
+                if ($close !== '' && $closeTimestamp === false) {
+                    throw new InvalidArgumentException('Enter a valid selection closing date.');
+                }
+                if ($openTimestamp !== false && $closeTimestamp !== false && $closeTimestamp <= $openTimestamp) {
+                    throw new InvalidArgumentException('The selection closing time must be after the opening time.');
                 }
                 $pdo->beginTransaction();
                 $pdo->prepare('UPDATE academic_years SET is_current = 0')->execute();
@@ -149,6 +239,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $year = $getCurrentAcademicYear();
                 if (!$year) {
                     throw new RuntimeException('Create an academic year before configuring placement.');
+                }
+                $openTimestamp = $open !== '' ? strtotime($open) : false;
+                $closeTimestamp = $close !== '' ? strtotime($close) : false;
+                if (($open !== '' && $openTimestamp === false) || ($close !== '' && $closeTimestamp === false)) {
+                    throw new InvalidArgumentException('Enter valid selection dates.');
+                }
+                if ($openTimestamp !== false && $closeTimestamp !== false && $closeTimestamp <= $openTimestamp) {
+                    throw new InvalidArgumentException('The selection closing time must be after the opening time.');
                 }
                 $pdo->prepare('UPDATE academic_years SET selection_opens_at = ?, selection_closes_at = ?, appeals_close_at = ?, status = ? WHERE id = ?')
                     ->execute([
@@ -191,8 +289,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('Unable to read the uploaded CSV.');
                 }
                 $headers = fgetcsv($handle);
+                if (is_array($headers) && isset($headers[0])) {
+                    $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+                }
                 $expected = ['student_code', 'full_name', 'username', 'gpa'];
-                if ($headers === false || array_map('strtolower', $headers) !== $expected) {
+                if ($headers === false || array_map(static fn($header): string => strtolower(trim((string) $header)), $headers) !== $expected) {
                     fclose($handle);
                     throw new InvalidArgumentException('CSV columns must be: student_code,full_name,username,gpa');
                 }
@@ -341,7 +442,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sdss_audit($pdo, 'placement.run', 'placement_run', $runId, $summary);
                 $notice = "Draft placement completed. {$summary} Review before publishing.";
             } elseif ($action === 'approve_placement' && $role === 'registrar') {
-                $run = $pdo->query("SELECT id FROM placement_runs WHERE status = 'review' ORDER BY id DESC LIMIT 1")->fetch();
+                $year = $getCurrentAcademicYear();
+                if (!$year) {
+                    throw new RuntimeException('Create an academic year before approving placements.');
+                }
+                $runQuery = $pdo->prepare("SELECT id FROM placement_runs WHERE status = 'review' AND academic_year_id = ? ORDER BY id DESC LIMIT 1");
+                $runQuery->execute([$year['id']]);
+                $run = $runQuery->fetch();
                 if (!$run) {
                     throw new RuntimeException('There is no placement run awaiting review.');
                 }
@@ -349,8 +456,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sdss_audit($pdo, 'placement.approved', 'placement_run', (int) $run['id']);
                 $notice = 'Placement run approved for publication.';
             } elseif ($action === 'publish_placement' && $role === 'registrar') {
+                $year = $getCurrentAcademicYear();
+                if (!$year) {
+                    throw new RuntimeException('Create an academic year before publishing placements.');
+                }
                 $pdo->beginTransaction();
-                $run = $pdo->query("SELECT id FROM placement_runs WHERE status = 'approved' ORDER BY id DESC LIMIT 1")->fetch();
+                $runQuery = $pdo->prepare("SELECT id FROM placement_runs WHERE status = 'approved' AND academic_year_id = ? ORDER BY id DESC LIMIT 1");
+                $runQuery->execute([$year['id']]);
+                $run = $runQuery->fetch();
                 if (!$run) {
                     throw new RuntimeException('Approve a reviewed placement run before publishing.');
                 }
@@ -459,7 +572,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $pdo->prepare('INSERT INTO announcements (created_by, department_id, title, body, audience) VALUES (?, ?, ?, ?, ?)')
                     ->execute([$currentUserId, $departmentId ?: null, $title, $body, $departmentId ? 'department' : 'all']);
-                sdss_audit($pdo, 'announcement.created', 'announcement', (int) $pdo->lastInsertId());
+                $announcementId = (int) $pdo->lastInsertId();
+                if ($departmentId) {
+                    $recipientsQuery = $pdo->prepare(
+                        'SELECT DISTINCT s.user_id FROM students s JOIN users u ON u.id = s.user_id AND u.is_active = 1 LEFT JOIN choices c ON c.student_id = s.id LEFT JOIN assignments a ON a.student_id = s.id AND a.is_published = 1 WHERE c.choice1 = ? OR c.choice2 = ? OR c.choice3 = ? OR a.department_id = ?'
+                    );
+                    $recipientsQuery->execute([$departmentId, $departmentId, $departmentId, $departmentId]);
+                } else {
+                    $recipientsQuery = $pdo->query(
+                        "SELECT s.user_id FROM students s JOIN users u ON u.id = s.user_id WHERE u.is_active = 1"
+                    );
+                }
+                $insertNotification = $pdo->prepare('INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)');
+                foreach ($recipientsQuery->fetchAll(PDO::FETCH_COLUMN) as $recipientId) {
+                    $insertNotification->execute([$recipientId, $title, $body]);
+                }
+                sdss_audit($pdo, 'announcement.created', 'announcement', $announcementId);
                 $notice = 'Announcement published.';
             } elseif ($action === 'send_reminder' && $role === 'coordinator') {
                 $title = trim((string) ($_POST['title'] ?? ''));
@@ -494,7 +622,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sdss_audit($pdo, 'department.criteria_proposed', 'department', $departmentId);
                 $notice = 'Eligibility criteria sent for approval.';
             } elseif ($action === 'save_setting' && $role === 'admin') {
-            } elseif ($action === 'save_setting' && $role === 'admin') {
                 $key = trim((string) ($_POST['setting_key'] ?? ''));
                 $value = trim((string) ($_POST['setting_value'] ?? ''));
                 if (!preg_match('/^[a-z][a-z0-9_]{1,99}$/', $key) || $value === '') {
@@ -514,8 +641,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$notificationId) {
                     throw new InvalidArgumentException('Invalid notification.');
                 }
-                $pdo->prepare('UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
-                    ->execute([$notificationId, $currentUserId]);
+                $markRead = $pdo->prepare('UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND read_at IS NULL');
+                $markRead->execute([$notificationId, $currentUserId]);
+                if ($markRead->rowCount() !== 1) {
+                    throw new RuntimeException('Notification not found, or it was already marked as read.');
+                }
                 $notice = 'Notification marked as read.';
             } else {
                 throw new RuntimeException('This action is not available for your role.');
@@ -544,6 +674,7 @@ $year = $getCurrentAcademicYear();
 $collegeStmt = $pdo->prepare('SELECT id FROM colleges WHERE dean_user_id = ?');
 $collegeStmt->execute([$currentUserId]);
 $currentCollegeId = $collegeStmt->fetchColumn();
+$collegeStmt->closeCursor();
 $departmentFilterSql = '';
 $departmentFilterParams = [];
 if ($role === 'college_dean') {
@@ -583,7 +714,7 @@ if ($role === 'student' && $currentStudent) {
     ];
 } elseif ($role === 'college_dean') {
     $collegeStats = $pdo->prepare(
-        'SELECT COUNT(DISTINCT s.id) AS students, COUNT(DISTINCT CASE WHEN c.id IS NOT NULL THEN s.id END) AS submitted, COUNT(DISTINCT d.id) AS departments, COALESCE(SUM(DISTINCT d.capacity), 0) AS capacity FROM colleges co LEFT JOIN departments d ON d.college_id = co.id LEFT JOIN students s ON s.college_id = co.id LEFT JOIN choices c ON c.student_id = s.id WHERE co.dean_user_id = ?'
+        'SELECT (SELECT COUNT(*) FROM students s WHERE s.college_id = co.id) AS students, (SELECT COUNT(*) FROM choices c JOIN students s ON s.id = c.student_id WHERE s.college_id = co.id) AS submitted, (SELECT COUNT(*) FROM departments d WHERE d.college_id = co.id AND d.is_active = 1) AS departments, (SELECT COALESCE(SUM(d.capacity), 0) FROM departments d WHERE d.college_id = co.id AND d.is_active = 1) AS capacity FROM colleges co WHERE co.dean_user_id = ?'
     );
     $collegeStats->execute([$currentUserId]);
     $collegeRow = $collegeStats->fetch() ?: [];
@@ -592,6 +723,18 @@ if ($role === 'student' && $currentStudent) {
         'Submitted choices' => (int) ($collegeRow['submitted'] ?? 0),
         'Departments' => (int) ($collegeRow['departments'] ?? 0),
         'Total capacity' => (int) ($collegeRow['capacity'] ?? 0),
+    ];
+} elseif ($role === 'department_head') {
+    $departmentStats = $pdo->prepare(
+        'SELECT d.id, d.capacity, (SELECT COUNT(DISTINCT p.student_id) FROM department_preferences p WHERE p.department_id = d.id) AS applicants, (SELECT COUNT(*) FROM assignments a WHERE a.department_id = d.id AND a.is_published = 1) AS assigned FROM departments d WHERE d.head_user_id = ?'
+    );
+    $departmentStats->execute([$currentUserId]);
+    $departmentRow = $departmentStats->fetch() ?: [];
+    $stats = [
+        'Applicants' => (int) ($departmentRow['applicants'] ?? 0),
+        'Published assignments' => (int) ($departmentRow['assigned'] ?? 0),
+        'Department capacity' => (int) ($departmentRow['capacity'] ?? 0),
+        'Remaining capacity' => max(0, (int) ($departmentRow['capacity'] ?? 0) - (int) ($departmentRow['assigned'] ?? 0)),
     ];
 }
 
@@ -639,7 +782,13 @@ if ($role === 'department_head') {
 $assignmentSql = 'SELECT s.full_name, s.student_code, s.gpa, d.dept_name, a.is_published, a.assigned_at FROM assignments a JOIN students s ON s.id = a.student_id JOIN departments d ON d.id = a.department_id';
 $assignmentWhere = [];
 $assignmentParams = [];
-if ($role === 'student') {
+if (in_array($role, ['admin', 'registrar'], true)) {
+    $assignmentWhere[] = 'a.placement_run_id IN (SELECT id FROM placement_runs WHERE academic_year_id = ?)';
+    $assignmentParams[] = (int) ($year['id'] ?? 0);
+    if (!in_array($view, ['review', 'publish'], true)) {
+        $assignmentWhere[] = 'a.is_published = 1';
+    }
+} elseif ($role === 'student') {
     $assignmentWhere[] = 'a.is_published = 1 AND s.user_id = ?';
     $assignmentParams[] = $currentUserId;
 } elseif ($role === 'department_head') {
@@ -648,9 +797,7 @@ if ($role === 'student') {
 } elseif ($role === 'college_dean') {
     $assignmentWhere[] = 'a.is_published = 1 AND d.college_id IN (SELECT id FROM colleges WHERE dean_user_id = ?)';
     $assignmentParams[] = $currentUserId;
-} elseif (!in_array($role, ['admin', 'registrar'], true)) {
-    $assignmentWhere[] = 'a.is_published = 1';
-} elseif (!in_array($view, ['review', 'publish'], true)) {
+} else {
     $assignmentWhere[] = 'a.is_published = 1';
 }
 if ($assignmentWhere) {
@@ -661,15 +808,55 @@ $assignmentQuery = $pdo->prepare($assignmentSql);
 $assignmentQuery->execute($assignmentParams);
 $assignmentRows = $assignmentQuery->fetchAll();
 
+if (($_GET['export'] ?? '') === 'database_backup') {
+    if ($role !== 'admin') {
+        http_response_code(403);
+        exit('You are not allowed to download database backups.');
+    }
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+        http_response_code(501);
+        exit('Database downloads are not enabled for this database driver. Use your MySQL provider’s backup tools.');
+    }
+    $backupPath = __DIR__ . '/../storage/sdss-backup-' . bin2hex(random_bytes(8)) . '.sqlite';
+    try {
+        $pdo->exec('PRAGMA wal_checkpoint(FULL)');
+        $pdo->exec('VACUUM INTO ' . $pdo->quote($backupPath));
+        if (!is_file($backupPath) || filesize($backupPath) === 0) {
+            throw new RuntimeException('The SQLite backup file was not created.');
+        }
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="sdss-backup-' . date('Y-m-d-His') . '.sqlite"');
+        header('Content-Length: ' . filesize($backupPath));
+        if (readfile($backupPath) === false) {
+            throw new RuntimeException('Unable to stream the SQLite backup.');
+        }
+    } catch (PDOException $exception) {
+        error_log('SDSS backup database error: ' . $exception->getMessage());
+        http_response_code(500);
+        echo 'The database backup could not be created.';
+    } catch (RuntimeException $exception) {
+        error_log('SDSS backup error: ' . $exception->getMessage());
+        http_response_code(500);
+        echo 'The database backup could not be created.';
+    } finally {
+        if (is_file($backupPath)) {
+            unlink($backupPath);
+        }
+    }
+    exit;
+}
+
 if (($_GET['export'] ?? '') === 'placements') {
     if (!in_array($role, ['admin', 'registrar', 'department_head', 'college_dean', 'coordinator'], true)) {
         http_response_code(403);
         exit('You are not allowed to export placement reports.');
     }
     if (in_array($role, ['admin', 'registrar'], true)) {
-        $publishedRows = $pdo->query(
-            'SELECT s.full_name, s.student_code, s.gpa, d.dept_name, a.assigned_at FROM assignments a JOIN students s ON s.id = a.student_id JOIN departments d ON d.id = a.department_id WHERE a.is_published = 1 ORDER BY s.gpa DESC'
-        )->fetchAll();
+        $exportQuery = $pdo->prepare(
+            'SELECT s.full_name, s.student_code, s.gpa, d.dept_name, a.assigned_at FROM assignments a JOIN students s ON s.id = a.student_id JOIN departments d ON d.id = a.department_id WHERE a.is_published = 1 AND a.placement_run_id IN (SELECT id FROM placement_runs WHERE academic_year_id = ?) ORDER BY s.gpa DESC'
+        );
+        $exportQuery->execute([(int) ($year['id'] ?? 0)]);
+        $publishedRows = $exportQuery->fetchAll();
     } else {
         $publishedRows = $assignmentRows;
     }
@@ -698,6 +885,11 @@ if (($_GET['export'] ?? '') === 'placements') {
     exit;
 }
 
+$menus = $loadMenus($pdo);
+if (!isset($menus[$role][$view])) {
+    $view = 'dashboard';
+    $notice = 'That menu item is no longer available. Showing your dashboard instead.';
+}
 $viewTitle = $menus[$role][$view];
 ?>
 <!DOCTYPE html>
@@ -716,12 +908,16 @@ $viewTitle = $menus[$role][$view];
             <p class="text-xs text-slate-400 mt-2"><?php echo sdss_escape(ucwords(str_replace('_', ' ', $role))); ?></p>
             <nav class="mt-8 space-y-1" aria-label="Main navigation">
                 <?php foreach ($menus[$role] as $key => $label): ?>
-                    <a href="workflow.php?view=<?php echo rawurlencode($key); ?>" class="block rounded-lg px-3 py-2 text-sm <?php echo $view === $key ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'; ?>">
+                    <?php
+                    $menuHref = $key === 'public_home'
+                        ? '../frontend/pages/home.html'
+                        : ($key === 'logout' ? 'logout.php' : 'workflow.php?view=' . rawurlencode($key));
+                    $menuClass = $view === $key ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white';
+                    ?>
+                    <a href="<?php echo sdss_escape($menuHref); ?>" class="block rounded-lg px-3 py-2 text-sm <?php echo $menuClass; ?>">
                         <?php echo sdss_escape($label); ?>
                     </a>
                 <?php endforeach; ?>
-                <a href="../frontend/pages/home.html" class="block rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-white">Public home</a>
-                <a href="logout.php" class="block rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-white">Logout</a>
             </nav>
         </aside>
 
@@ -788,24 +984,95 @@ $viewTitle = $menus[$role][$view];
                         <section class="bg-white rounded-xl p-5 border border-slate-200 overflow-x-auto">
                             <h2 class="font-bold mb-4">Accounts and role definitions</h2>
                             <?php $users = $pdo->query('SELECT id, full_name, email, role, is_active FROM users ORDER BY full_name')->fetchAll(); ?>
-                            <table class="w-full text-sm">
-                                <thead><tr class="text-left border-b"><th class="p-2">Name</th><th class="p-2">Username</th><th class="p-2">Role</th><th class="p-2">Status</th><th></th></tr></thead>
-                                <tbody><?php foreach ($users as $user): ?><tr class="border-b">
-                                    <td class="p-2"><?php echo sdss_escape($user['full_name']); ?></td><td class="p-2"><?php echo sdss_escape($user['email']); ?></td><td class="p-2"><?php echo sdss_escape($user['role']); ?></td><td class="p-2"><?php echo (int) $user['is_active'] ? 'Active' : 'Inactive'; ?></td>
-                                    <td class="p-2"><form method="post"><input type="hidden" name="csrf_token" value="<?php echo sdss_escape(sdss_csrf_token()); ?>"><input type="hidden" name="action" value="toggle_user"><input type="hidden" name="user_id" value="<?php echo (int) $user['id']; ?>"><button class="text-indigo-700 underline" <?php echo (int) $user['id'] === $currentUserId ? 'disabled' : ''; ?>>Toggle</button></form></td>
+                            <table class="w-full min-w-[900px] text-sm">
+                                <thead><tr class="text-left border-b"><th class="p-2">Name</th><th class="p-2">Username</th><th class="p-2">Role</th><th class="p-2">Status</th><th class="p-2">Update account</th><th></th></tr></thead>
+                                <tbody><?php foreach ($users as $user): ?><tr class="border-b align-top">
+                                    <td class="p-2">
+                                        <form id="update-user-<?php echo (int) $user['id']; ?>" method="post">
+                                            <input type="hidden" name="csrf_token" value="<?php echo sdss_escape(sdss_csrf_token()); ?>">
+                                            <input type="hidden" name="action" value="update_user">
+                                            <input type="hidden" name="user_id" value="<?php echo (int) $user['id']; ?>">
+                                            <input name="full_name" required maxlength="255" value="<?php echo sdss_escape($user['full_name']); ?>" aria-label="Full name" class="w-40 border rounded p-2">
+                                        </form>
+                                    </td>
+                                    <td class="p-2"><input form="update-user-<?php echo (int) $user['id']; ?>" name="username" required maxlength="255" value="<?php echo sdss_escape($user['email']); ?>" aria-label="Username" class="w-44 border rounded p-2"></td>
+                                    <td class="p-2"><select form="update-user-<?php echo (int) $user['id']; ?>" name="role" aria-label="Role" class="border rounded p-2"><?php foreach ($roleNames as $key => $name): ?><option value="<?php echo sdss_escape($key); ?>" <?php echo $key === $user['role'] ? 'selected' : ''; ?>><?php echo sdss_escape($name); ?></option><?php endforeach; ?></select></td>
+                                    <td class="p-2"><?php echo (int) $user['is_active'] ? 'Active' : 'Inactive'; ?></td>
+                                    <td class="p-2"><input form="update-user-<?php echo (int) $user['id']; ?>" name="password" type="password" minlength="8" maxlength="255" autocomplete="new-password" placeholder="Leave empty to keep" aria-label="New password (optional)" class="w-44 border rounded p-2"><button form="update-user-<?php echo (int) $user['id']; ?>" class="ml-2 rounded bg-indigo-600 px-3 py-2 text-white">Save</button></td>
+                                    <td class="p-2"><form method="post"><input type="hidden" name="csrf_token" value="<?php echo sdss_escape(sdss_csrf_token()); ?>"><input type="hidden" name="action" value="toggle_user"><input type="hidden" name="user_id" value="<?php echo (int) $user['id']; ?>"><button class="text-indigo-700 underline" <?php echo (int) $user['id'] === $currentUserId ? 'disabled' : ''; ?>>Activate / deactivate</button></form></td>
                                 </tr><?php endforeach; ?></tbody>
                             </table>
                         </section>
                     </div>
                 <?php elseif ($view === 'roles'): ?>
-                    <section class="bg-white rounded-xl p-5 border border-slate-200 overflow-x-auto">
-                        <h2 class="font-bold mb-4">Role permissions</h2>
-                        <table class="w-full text-sm"><thead><tr class="text-left border-b"><th class="p-2">Role</th><th class="p-2">Permission</th></tr></thead><tbody>
-                            <?php foreach ($pdo->query('SELECT role_slug, permission FROM role_permissions ORDER BY role_slug, permission')->fetchAll() as $permission): ?>
-                                <tr class="border-b"><td class="p-2"><?php echo sdss_escape($permission['role_slug']); ?></td><td class="p-2"><?php echo sdss_escape($permission['permission']); ?></td></tr>
+                    <?php
+                    $permissionRows = $pdo->query(
+                        'SELECT role_slug, permission FROM role_permissions ORDER BY role_slug, permission'
+                    )->fetchAll();
+                    $navigationRows = $pdo->query(
+                        'SELECT rn.role_slug, rn.view_key, rn.label, rn.sort_order, rn.is_active FROM role_navigation rn JOIN roles r ON r.slug = rn.role_slug ORDER BY r.name, rn.sort_order, rn.view_key'
+                    )->fetchAll();
+                    $navigationByRole = [];
+                    foreach ($navigationRows as $navigationRow) {
+                        $navigationByRole[$navigationRow['role_slug']][] = $navigationRow;
+                    }
+                    ?>
+                    <div class="space-y-6">
+                        <section class="bg-white rounded-xl p-5 border border-slate-200 overflow-x-auto">
+                            <h2 class="font-bold mb-4">Role permissions</h2>
+                            <table class="w-full text-sm"><thead><tr class="text-left border-b"><th class="p-2">Role</th><th class="p-2">Permission</th></tr></thead><tbody>
+                                <?php foreach ($permissionRows as $permission): ?>
+                                    <tr class="border-b"><td class="p-2"><?php echo sdss_escape($permission['role_slug']); ?></td><td class="p-2"><?php echo sdss_escape($permission['permission']); ?></td></tr>
+                                <?php endforeach; ?>
+                            </tbody></table>
+                        </section>
+                        <section class="space-y-4">
+                            <div>
+                                <h2 class="font-bold text-lg">Sidebar navigation</h2>
+                                <p class="text-sm text-slate-600 mt-1">Change labels and order, or hide an item for a role. Positions are saved in the database; the dashboard and logout links must remain visible.</p>
+                            </div>
+                            <?php foreach ($roleNames as $roleSlug => $roleName): ?>
+                                <form method="post" class="bg-white rounded-xl p-5 border border-slate-200">
+                                    <h3 class="font-semibold mb-4"><?php echo sdss_escape($roleName); ?></h3>
+                                    <input type="hidden" name="csrf_token" value="<?php echo sdss_escape(sdss_csrf_token()); ?>">
+                                    <input type="hidden" name="action" value="save_navigation">
+                                    <input type="hidden" name="role_slug" value="<?php echo sdss_escape($roleSlug); ?>">
+                                    <div class="overflow-x-auto">
+                                        <table class="w-full text-sm">
+                                            <thead><tr class="text-left border-b"><th class="p-2">Menu item</th><th class="p-2">Position</th><th class="p-2">Visibility</th></tr></thead>
+                                            <tbody>
+                                                <?php foreach ($navigationByRole[$roleSlug] ?? [] as $navigationItem): ?>
+                                                    <tr class="border-b">
+                                                        <td class="p-2">
+                                                            <label class="sr-only" for="navigation-label-<?php echo sdss_escape($roleSlug . '-' . $navigationItem['view_key']); ?>">Menu label</label>
+                                                            <input id="navigation-label-<?php echo sdss_escape($roleSlug . '-' . $navigationItem['view_key']); ?>" name="navigation[<?php echo sdss_escape($navigationItem['view_key']); ?>][label]" value="<?php echo sdss_escape($navigationItem['label']); ?>" required maxlength="120" class="w-full min-w-48 border rounded-lg p-2">
+                                                        </td>
+                                                        <td class="p-2">
+                                                            <label class="sr-only" for="navigation-order-<?php echo sdss_escape($roleSlug . '-' . $navigationItem['view_key']); ?>">Menu position</label>
+                                                            <input id="navigation-order-<?php echo sdss_escape($roleSlug . '-' . $navigationItem['view_key']); ?>" name="navigation[<?php echo sdss_escape($navigationItem['view_key']); ?>][sort_order]" type="number" min="0" max="999" value="<?php echo (int) $navigationItem['sort_order']; ?>" required class="w-24 border rounded-lg p-2">
+                                                        </td>
+                                                        <td class="p-2">
+                                                            <?php if (in_array($navigationItem['view_key'], ['dashboard', 'logout'], true)): ?>
+                                                                <input type="hidden" name="navigation[<?php echo sdss_escape($navigationItem['view_key']); ?>][is_active]" value="1">
+                                                                <span class="text-sm text-slate-600">Always visible</span>
+                                                            <?php else: ?>
+                                                                <label class="sr-only" for="navigation-active-<?php echo sdss_escape($roleSlug . '-' . $navigationItem['view_key']); ?>">Menu visibility</label>
+                                                                <select id="navigation-active-<?php echo sdss_escape($roleSlug . '-' . $navigationItem['view_key']); ?>" name="navigation[<?php echo sdss_escape($navigationItem['view_key']); ?>][is_active]" class="border rounded-lg p-2">
+                                                                    <option value="1" <?php echo (int) $navigationItem['is_active'] ? 'selected' : ''; ?>>Visible</option>
+                                                                    <option value="0" <?php echo !(int) $navigationItem['is_active'] ? 'selected' : ''; ?>>Hidden</option>
+                                                                </select>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <button class="mt-4 bg-indigo-600 text-white rounded-lg px-4 py-2">Save <?php echo sdss_escape($roleName); ?> sidebar</button>
+                                </form>
                             <?php endforeach; ?>
-                        </tbody></table>
-                    </section>
+                        </section>
+                    </div>
                 <?php elseif ($view === 'academic'): ?>
                     <div class="grid lg:grid-cols-2 gap-6">
                         <form method="post" class="bg-white rounded-xl p-5 border border-slate-200 space-y-3">
@@ -936,13 +1203,65 @@ $viewTitle = $menus[$role][$view];
                         <form method="post" class="mt-4"><input type="hidden" name="csrf_token" value="<?php echo sdss_escape(sdss_csrf_token()); ?>"><input type="hidden" name="action" value="run_placement"><button class="bg-indigo-600 text-white rounded-lg px-4 py-2">Run placement</button></form>
                     </section>
                 <?php elseif (in_array($view, ['review', 'publish', 'assigned', 'placement_result', 'reports', 'analytics', 'department_reports', 'placement_reports'], true)): ?>
+                    <?php
+                    $isPlacementReport = in_array($view, ['reports', 'analytics', 'department_reports', 'placement_reports'], true);
+                    $assignedByDepartment = [];
+                    foreach ($assignmentRows as $assignment) {
+                        $departmentName = $assignment['dept_name'];
+                        $assignedByDepartment[$departmentName] = ($assignedByDepartment[$departmentName] ?? 0) + 1;
+                    }
+                    $totalCapacity = array_sum(array_map(
+                        static fn(array $department): int => (int) $department['capacity'],
+                        $departments
+                    ));
+                    $totalAssigned = count($assignmentRows);
+                    $capacityUtilization = $totalCapacity > 0 ? round($totalAssigned / $totalCapacity * 100, 1) : 0;
+                    $reportTitles = [
+                        'assigned' => 'Officially assigned students',
+                        'department_reports' => 'Department placement report',
+                        'analytics' => 'College placement analytics',
+                        'placement_reports' => 'Placement preparation report',
+                        'reports' => 'Official placement report',
+                        'review' => 'Placement review',
+                        'publish' => 'Placement publication',
+                        'placement_result' => 'Placement result',
+                    ];
+                    ?>
                     <section class="bg-white rounded-xl p-5 border border-slate-200 overflow-x-auto">
                         <div class="flex items-center justify-between gap-3 mb-4">
-                            <h2 class="font-bold">Placement assignments</h2>
+                            <h2 class="font-bold"><?php echo sdss_escape($reportTitles[$view]); ?></h2>
                             <?php if (in_array($role, ['admin', 'registrar', 'department_head', 'college_dean', 'coordinator'], true) && in_array($view, ['reports', 'analytics', 'department_reports', 'placement_reports'], true)): ?>
                                 <a class="bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm" href="workflow.php?export=placements">Export published CSV</a>
                             <?php endif; ?>
                         </div>
+                        <?php if ($isPlacementReport): ?>
+                            <div class="grid sm:grid-cols-3 gap-4 mb-5" aria-label="Placement summary">
+                                <article class="rounded-lg border border-slate-200 p-4"><p class="text-sm text-slate-500">Departments in scope</p><p class="text-2xl font-bold mt-2"><?php echo count($departments); ?></p></article>
+                                <article class="rounded-lg border border-slate-200 p-4"><p class="text-sm text-slate-500">Published assignments</p><p class="text-2xl font-bold mt-2"><?php echo $totalAssigned; ?></p></article>
+                                <article class="rounded-lg border border-slate-200 p-4"><p class="text-sm text-slate-500">Capacity utilization</p><p class="text-2xl font-bold mt-2"><?php echo number_format($capacityUtilization, 1); ?>%</p></article>
+                            </div>
+                            <h3 class="font-semibold mb-2">Capacity utilization by department</h3>
+                            <table class="w-full text-sm mb-6">
+                                <thead><tr class="text-left border-b"><th class="p-2">Department</th><th class="p-2">Capacity</th><th class="p-2">Assigned</th><th class="p-2">Remaining</th><th class="p-2">Utilization</th></tr></thead>
+                                <tbody>
+                                    <?php foreach ($departments as $department): ?>
+                                        <?php
+                                        $departmentCapacity = (int) $department['capacity'];
+                                        $departmentAssigned = $assignedByDepartment[$department['dept_name']] ?? 0;
+                                        $departmentUtilization = $departmentCapacity > 0 ? round($departmentAssigned / $departmentCapacity * 100, 1) : 0;
+                                        ?>
+                                        <tr class="border-b">
+                                            <td class="p-2"><?php echo sdss_escape($department['dept_name']); ?></td>
+                                            <td class="p-2"><?php echo $departmentCapacity; ?></td>
+                                            <td class="p-2"><?php echo $departmentAssigned; ?></td>
+                                            <td class="p-2"><?php echo max(0, $departmentCapacity - $departmentAssigned); ?></td>
+                                            <td class="p-2"><?php echo number_format($departmentUtilization, 1); ?>%</td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (!$departments): ?><tr><td class="p-2 text-slate-500" colspan="5">No departments are assigned to this scope.</td></tr><?php endif; ?>
+                                </tbody>
+                            </table>
+                        <?php endif; ?>
                         <?php if ($view === 'review' && $role === 'registrar'): ?><form method="post" class="mb-4"><input type="hidden" name="csrf_token" value="<?php echo sdss_escape(sdss_csrf_token()); ?>"><input type="hidden" name="action" value="approve_placement"><button class="bg-indigo-700 text-white rounded-lg px-4 py-2">Approve reviewed placement</button></form><?php endif; ?>
                         <?php if ($view === 'publish' && $role === 'registrar'): ?><form method="post" class="mb-4"><input type="hidden" name="csrf_token" value="<?php echo sdss_escape(sdss_csrf_token()); ?>"><input type="hidden" name="action" value="publish_placement"><button class="bg-emerald-700 text-white rounded-lg px-4 py-2">Publish approved placement</button></form><?php endif; ?>
                         <table class="w-full text-sm"><thead><tr class="text-left border-b"><th class="p-2">Student</th><th class="p-2">Code</th><th class="p-2">GPA</th><th class="p-2">Department</th><th class="p-2">Status</th></tr></thead><tbody>
@@ -1013,7 +1332,16 @@ $viewTitle = $menus[$role][$view];
                     <?php $collegeStaff = $pdo->prepare("SELECT DISTINCT u.full_name, u.email, u.role, u.is_active FROM users u LEFT JOIN departments d ON d.head_user_id = u.id WHERE u.role IN ('department_head', 'coordinator') AND (d.college_id IN (SELECT id FROM colleges WHERE dean_user_id = ?) OR u.role = 'coordinator') ORDER BY u.role, u.full_name"); $collegeStaff->execute([$currentUserId]); ?>
                     <section class="bg-white rounded-xl p-5 border border-slate-200"><h2 class="font-bold mb-4">College staff</h2><?php foreach ($collegeStaff->fetchAll() as $staffMember): ?><p class="border-b py-3"><?php echo sdss_escape($staffMember['full_name']); ?> — <?php echo sdss_escape($staffMember['role']); ?> · <?php echo (int) $staffMember['is_active'] ? 'Active' : 'Inactive'; ?></p><?php endforeach; ?></section>
                 <?php elseif ($view === 'backup' && $role === 'admin'): ?>
-                    <section class="bg-white rounded-xl p-5 border border-slate-200"><h2 class="font-bold">Backup and security</h2><p class="text-sm text-slate-600 mt-2">Use your database provider’s automated backup tooling. SQLite deployments should securely copy the database and its WAL files while the application is stopped.</p><p class="text-sm text-slate-600 mt-2">Session cookies are HttpOnly, SameSite=Lax, and marked Secure over HTTPS.</p></section>
+                    <section class="bg-white rounded-xl p-5 border border-slate-200 max-w-2xl">
+                        <h2 class="font-bold">Backup and security</h2>
+                        <?php if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'): ?>
+                            <p class="text-sm text-slate-600 mt-2">Create a consistent SQLite backup while the system is running.</p>
+                            <a href="workflow.php?export=database_backup" class="inline-block mt-4 bg-indigo-600 text-white rounded-lg px-4 py-2">Download database backup</a>
+                        <?php else: ?>
+                            <p class="text-sm text-slate-600 mt-2">Database downloads are only available for SQLite. Use the configured MySQL provider’s backup tools.</p>
+                        <?php endif; ?>
+                        <p class="text-sm text-slate-600 mt-4">Session cookies are HttpOnly, SameSite=Lax, and marked Secure over HTTPS.</p>
+                    </section>
                 <?php else: ?>
                     <section class="bg-white rounded-xl p-5 border border-slate-200"><h2 class="font-bold"><?php echo sdss_escape($viewTitle); ?></h2><p class="text-sm text-slate-600 mt-2">No records are available for this section yet.</p></section>
                 <?php endif; ?>

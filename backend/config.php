@@ -94,6 +94,18 @@ function sdss_db(): PDO
     ");
 
     $pdo->exec("
+        CREATE TABLE IF NOT EXISTS role_navigation (
+            role_slug VARCHAR(50) NOT NULL,
+            view_key VARCHAR(80) NOT NULL,
+            label {$textColumn} NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (role_slug, view_key),
+            FOREIGN KEY (role_slug) REFERENCES roles(slug) ON DELETE CASCADE
+        ){$tableSuffix}
+    ");
+
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS colleges (
             id {$idColumn},
             name {$textColumn} NOT NULL UNIQUE,
@@ -426,6 +438,62 @@ function sdss_db(): PDO
             if ($findPermission->fetchColumn() === false) {
                 $addPermission->execute([$role, $permission]);
             }
+        }
+    }
+
+    $defaultNavigation = [
+        'admin' => [
+            'dashboard' => 'Dashboard', 'users' => 'User Management', 'roles' => 'Role & Permissions',
+            'academic' => 'Academic Year Management', 'settings' => 'System Settings', 'audit' => 'Audit Logs',
+            'backup' => 'Backup & Security', 'announcements' => 'Announcements',
+        ],
+        'registrar' => [
+            'dashboard' => 'Dashboard', 'import' => 'Import Student Data', 'students' => 'Student Records',
+            'gpa' => 'GPA & Ranking Management', 'placement_config' => 'Placement Configuration',
+            'run' => 'Placement Algorithm Runner', 'review' => 'Placement Review & Approval',
+            'publish' => 'Publish Placement Results', 'reports' => 'Official Placement Reports',
+            'appeals' => 'Appeals Processing',
+        ],
+        'department_head' => [
+            'dashboard' => 'Dashboard', 'department' => 'Department Information', 'criteria' => 'Special Criteria Settings',
+            'capacity' => 'Capacity Proposal', 'applicants' => 'Applicants List', 'assigned' => 'Assigned Students',
+            'announcements' => 'Department Announcements', 'department_reports' => 'Department Reports',
+        ],
+        'student' => [
+            'dashboard' => 'Dashboard', 'departments' => 'Available Departments', 'choices' => 'Department Preference / Selection',
+            'submitted' => 'My Submitted Choices', 'placement_result' => 'Placement Result',
+            'profile' => 'My Profile', 'transcript' => 'My Transcript', 'appeal_submit' => 'Complaints / Appeals',
+            'notifications' => 'Notifications',
+        ],
+        'college_dean' => [
+            'dashboard' => 'Dashboard', 'college' => 'College Information', 'college_departments' => 'College Departments',
+            'capacity_approval' => 'Department Capacity Approval', 'staff' => 'Coordinator & Department Head Management',
+            'analytics' => 'College Placement Analytics', 'appeals' => 'Appeals Review', 'reports' => 'College Reports',
+        ],
+        'coordinator' => [
+            'dashboard' => 'Dashboard', 'choices_monitor' => 'Student Choice Monitoring',
+            'follow_up' => 'Pending Choice Follow-up', 'eligibility' => 'Student Eligibility Monitoring',
+            'appeals' => 'Appeal / Dispute Handling', 'placement_reports' => 'Placement Preparation Reports',
+            'notifications' => 'Notifications', 'announcements' => 'Announcements',
+        ],
+    ];
+    foreach ($defaultNavigation as &$items) {
+        $items['public_home'] = 'Public home';
+        $items['logout'] = 'Logout';
+    }
+    unset($items);
+    $findNavigation = $pdo->prepare('SELECT view_key FROM role_navigation WHERE role_slug = ? AND view_key = ?');
+    $addNavigation = $pdo->prepare(
+        'INSERT INTO role_navigation (role_slug, view_key, label, sort_order, is_active) VALUES (?, ?, ?, ?, 1)'
+    );
+    foreach ($defaultNavigation as $roleSlug => $items) {
+        $sortOrder = 0;
+        foreach ($items as $viewKey => $viewLabel) {
+            $findNavigation->execute([$roleSlug, $viewKey]);
+            if ($findNavigation->fetchColumn() === false) {
+                $addNavigation->execute([$roleSlug, $viewKey, $viewLabel, $sortOrder]);
+            }
+            $sortOrder++;
         }
     }
 
