@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="am">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SDSS - Frequently Asked Questions (FAQ)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Custom Stylesheet -->
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col justify-between">
+
+    <!-- Header / Navigation Bar -->
+    <header class="bg-indigo-700 text-white shadow-md py-4 px-8 flex justify-between items-center">
+        <h1 class="text-xl font-bold tracking-wide">
+            <a href="home.html" class="hover:text-indigo-100 transition">SDSS Portal</a>
+        </h1>
+        <nav class="flex gap-6 items-center text-sm font-medium">
+            <a href="home.html" class="text-indigo-100 hover:text-white transition">Home</a>
+            <a href="announcement.html" class="text-indigo-100 hover:text-white transition">Announcements</a>
+            <a href="FAQ.html" class="text-white border-b-2 border-white pb-1 font-semibold">FAQ</a>
+            <a href="contact.html" class="text-indigo-100 hover:text-white transition">Contact</a>
+            <a href="../../backend/placement.php" class="text-indigo-100 hover:text-white transition">Placement Results</a>
+            <a href="login.html" class="bg-white text-indigo-700 hover:bg-indigo-50 font-semibold px-4 py-2 rounded-lg transition shadow-sm">
+                Login
+            </a>
+        </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-4xl mx-auto px-6 py-10 flex-grow w-full">
+
+        <!-- Page Header Banner -->
+        <div class="mb-8 text-center md:text-left bg-white p-6 md:p-8 rounded-2xl border border-slate-200 shadow-sm">
+            <span class="bg-indigo-50 text-indigo-700 text-xs font-semibold px-3 py-1.5 rounded-full border border-indigo-100">
+                Help Center
+            </span>
+            <h2 class="text-2xl md:text-3xl font-bold text-slate-900 mt-3">ተደጋግመው የሚጠየቁ ጥያቄዎች (FAQ)</h2>
+            <p class="text-slate-500 text-sm mt-1">ስለ ዲፓርትመንት ምደባ ስርዓቱ፣ ስላላቸው መስፈርቶች እና ስለ አጠቃላይ አሰራሩ የተጠየቁ ጥያቄዎች እና መልሶቻቸው።</p>
+        </div>
+
+        <!-- FAQ Accordion List -->
+        <div class="space-y-4">
+
+            <!-- FAQ Item 1 -->
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <button onclick="toggleFAQ(1)" class="w-full text-left p-5 font-bold text-slate-800 hover:bg-slate-50 flex justify-between items-center transition">
+                    <span>1. የዲፓርትመንት ምደባው በምን መስፈርት ነው የሚከናወነው?</span>
+                    <span id="icon-1" class="text-indigo-600 font-extrabold text-xl">+</span>
+                </button>
+                <div id="faq-1" class="hidden p-5 text-sm text-slate-600 border-t border-slate-100 bg-slate-50/50 leading-relaxed">
+                    ምደባው የሚከናወነው በተማሪው Cumulative GPA (CGPA) ቅደም-ተከተል እና በዲፓርትመንቶች የመቀበል አቅም (Capacity) መሠረት ነው። ከፍተኛ GPA ያለው ተማሪ ያስገባቸው ምርጫዎች በቅድሚያ ይስተናገዳሉ።
+                </div>
+            </div>
+
+            <!-- FAQ Item 2 -->
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <button onclick="toggleFAQ(2)" class="w-full text-left p-5 font-bold text-slate-800 hover:bg-slate-50 flex justify-between items-center transition">
+                    <span>2. ያስገባሁትን ምርጫ በኋላ ላይ መቀየር ወይም ማስተካከል እችላለሁ?</span>
+                    <span id="icon-2" class="text-indigo-600 font-extrabold text-xl">+</span>
+                </button>
+                <div id="faq-2" class="hidden p-5 text-sm text-slate-600 border-t border-slate-100 bg-slate-50/50 leading-relaxed">
+                    አዎ፣ የአድሚን ክፍሉ የምደባ ሂደቱን (Placement Algorithm) እስከሚያስሂድበት ጊዜ ድረስ ወደ አካውንትዎ በመግባት ምርጫዎን በማንኛውም ጊዜ ማስተካከል ይችላሉ።
+                </div>
+            </div>
+
+            <!-- FAQ Item 3 -->
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <button onclick="toggleFAQ(3)" class="w-full text-left p-5 font-bold text-slate-800 hover:bg-slate-50 flex justify-between items-center transition">
+                    <span>3. አንድን ዲፓርትመንት በሁለት ምርጫ ቦታዎች ድግሜ መምረጥ እችላለሁ?</span>
+                    <span id="icon-3" class="text-indigo-600 font-extrabold text-xl">+</span>
+                </button>
+                <div id="faq-3" class="hidden p-5 text-sm text-slate-600 border-t border-slate-100 bg-slate-50/50 leading-relaxed">
+                    አይችሉም። ሲስተሙ ድጋግመው እንዳይመርጡ ይከለክላል፤ ሶስቱም ምርጫዎች (1ኛ፣ 2ኛ እና 3ኛ ምርጫ) የተለያዩ ዲፓርትመንቶች መሆን አለባቸው።
+                </div>
+            </div>
+
+            <!-- FAQ Item 4 -->
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <button onclick="toggleFAQ(4)" class="w-full text-left p-5 font-bold text-slate-800 hover:bg-slate-50 flex justify-between items-center transition">
+                    <span>4. የምደባ ውጤት መቼ እና የት ይፋ ይሆናል?</span>
+                    <span id="icon-4" class="text-indigo-600 font-extrabold text-xl">+</span>
+                </button>
+                <div id="faq-4" class="hidden p-5 text-sm text-slate-600 border-t border-slate-100 bg-slate-50/50 leading-relaxed">
+                    አድሚኑ ምደባውን እንደተገቢው አጠናቆ ሲያካሂድ በሲስተሙ <a href="../../backend/placement.php" class="text-indigo-600 underline font-semibold">Placement Results</a> ገጽ ላይ በግልፅ ይፋ ይሆናል።
+                </div>
+            </div>
+
+            <!-- FAQ Item 5 -->
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <button onclick="toggleFAQ(5)" class="w-full text-left p-5 font-bold text-slate-800 hover:bg-slate-50 flex justify-between items-center transition">
+                    <span>5. የመግቢያ ፓስወርዴን/መረጃዬን ብረሳ ምን ማድረግ አለብኝ?</span>
+                    <span id="icon-5" class="text-indigo-600 font-extrabold text-xl">+</span>
+                </button>
+                <div id="faq-5" class="hidden p-5 text-sm text-slate-600 border-t border-slate-100 bg-slate-50/50 leading-relaxed">
+                    የመግቢያ መረጃዎን ከረሱ ወይም ችግር ካጋጠመዎት በ <a href="contact.html" class="text-indigo-600 underline font-semibold">Contact Page</a> በኩል መልእክት በመላክ ወይም ወደ አድሚሽን ቢሮ በአካል በመቅረብ ማስተካከል ይችላሉ።
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Contact Prompt Card -->
+        <div class="mt-10 bg-indigo-50 border border-indigo-100 rounded-2xl p-6 text-center">
+            <h3 class="font-bold text-slate-900 text-base mb-1">ሌላ ተጨማሪ ጥያቄ አልዎት?</h3>
+            <p class="text-slate-600 text-sm mb-4">የሚፈልጉትን መልስ እዚህ ካላገኙ በቀጥታ መልእክት ይላኩልን።</p>
+            <a href="contact.html" class="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2.5 rounded-xl transition shadow-sm text-sm">
+                ጥያቄዎን ይላኩ (Contact Support)
+            </a>
+        </div>
+
+    </main>
+
+    <!-- Footer Section -->
+    <footer class="bg-slate-800 text-slate-400 py-6 text-sm mt-12">
+        <div class="max-w-4xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4">
+            <p>&copy; SDSS - Student Department Selection System. All rights reserved.</p>
+            <div class="flex gap-4 text-xs">
+                <a href="announcement.html" class="hover:text-white transition">Announcements</a>
+                <span>•</span>
+                <a href="contact.html" class="hover:text-white transition">Contact Us</a>
+                <span>•</span>
+                <a href="../../backend/placement.php" class="hover:text-white transition">Placement Results</a>
+                <span>•</span>
+                <a href="login.html" class="hover:text-white transition">System Login</a>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Custom Script & Interactive Accordion Logic -->
+    <script src="../assets/script.js"></script>
+    <script>
+        function toggleFAQ(id) {
+            const content = document.getElementById(`faq-${id}`);
+            const icon = document.getElementById(`icon-${id}`);
+            
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                icon.textContent = '−';
+            } else {
+                content.classList.add('hidden');
+                icon.textContent = '+';
+            }
+        }
+    </script>
+</body>
+</html>
