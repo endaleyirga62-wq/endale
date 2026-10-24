@@ -498,7 +498,7 @@ function sdss_db(): PDO
     }
 
     $seedAccounts = [
-        ['System Administrator', 'MAU@123-admin', 'mau@123-admin', 'admin'],
+        ['System Administrator', 'mau@123', 'mau@123', 'admin'],
         ['Registrar', 'MAU@123-registrar', 'mau@123-registrar', 'registrar'],
         ['Coordinator', 'MAU@123-coordinator', 'mau@123-coordinator', 'coordinator'],
         ['Department Head', 'MAU@123-department-head', 'mau@123-department-head', 'department_head'],

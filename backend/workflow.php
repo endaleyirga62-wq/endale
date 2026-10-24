@@ -905,7 +905,7 @@ $viewTitle = $menus[$role][$view];
     <div class="min-h-screen md:flex">
         <aside class="bg-slate-900 text-slate-200 md:w-64 md:min-h-screen p-5">
             <a href="workflow.php" class="text-white font-bold text-xl">SDSS Portal</a>
-            <p class="text-xs text-slate-400 mt-2"><?php echo sdss_escape(ucwords(str_replace('_', ' ', $role))); ?></p>
+            <p class="text-xs text-slate-400 mt-2"><?php echo sdss_escape($roleNames[$role]); ?></p>
             <nav class="mt-8 space-y-1" aria-label="Main navigation">
                 <?php foreach ($menus[$role] as $key => $label): ?>
                     <?php
